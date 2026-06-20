@@ -1,108 +1,58 @@
-import React, { useState } from 'react';
-import ChatWindow from './ChatWindow';
-import SuggestedQuestions from './SuggestedQuestions';
-import './Chatbot.css';
+import { useState, useEffect } from "react";
+import ChatWindow from "./ChatWindow";
+import "./Chatbot.css";
 
-const Chatbot = () => {
-  const [messages, setMessages] = useState([
-    {
-      role: 'bot',
-      content: 'Hi! I am your Calculus Assistant 👋 Ask me anything about limits, derivatives, integrals, or continuity!',
-    },
-  ]);
-  const [input, setInput] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
+function Chatbot() {
+  const [isOpen, setIsOpen] = useState(false);
+  const [hasUnread, setHasUnread] = useState(false);
 
-  // Send message handler
-  const sendMessage = async (text) => {
-    const userText = text || input;
-    if (!userText.trim()) return;
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.key === "Escape" && isOpen) setIsOpen(false);
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [isOpen]);
 
-    // Add user message
-    const userMessage = { role: 'user', content: userText };
-    setMessages((prev) => [...prev, userMessage]);
-    setInput('');
-    setIsTyping(true);
-
-    try {
-      // Call your backend API
-      const response = await fetch('http://localhost:8000/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userText }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Server error');
-      }
-
-      const data = await response.json();
-
-      // Add bot response
-      const botMessage = {
-        role: 'bot',
-        content: data.response || data.message || 'Sorry, I did not understand that.',
-      };
-      setMessages((prev) => [...prev, botMessage]);
-
-    } catch (error) {
-      // Show error message in chat
-      const errorMessage = {
-        role: 'bot',
-        type: 'error',
-        content: 'Something went wrong. Please check your connection and try again.',
-      };
-      setMessages((prev) => [...prev, errorMessage]);
-    } finally {
-      setIsTyping(false);
+  useEffect(() => {
+    if (window.innerWidth <= 640) {
+      document.body.style.overflow = isOpen ? "hidden" : "";
     }
-  };
-
-  // Handle Enter key press
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
-  };
+    return () => { document.body.style.overflow = ""; };
+  }, [isOpen]);
 
   return (
-    <div className="chatbot-container">
-
-      {/* Header */}
-      <div className="chatbot-header">
-        <span>🧮 Calculus Assistant</span>
-      </div>
-
-      {/* Chat messages */}
-      <ChatWindow messages={messages} isTyping={isTyping} />
-
-      {/* Suggested questions */}
-      <SuggestedQuestions
-        messages={messages}
-        onQuestionClick={(question) => sendMessage(question)}
-      />
-
-      {/* Input area */}
-      <div className="chatbot-input-area">
-        <input
-          type="text"
-          className="chatbot-input"
-          placeholder="Ask a calculus question..."
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-        />
+    <>
+      {isOpen && <div className="cb-backdrop" onClick={() => setIsOpen(false)} aria-hidden="true" />}
+  
+      <div className="cb-root">
+        {isOpen && (
+          <div className="cb-panel-wrapper">
+            <ChatWindow
+              onClose={() => setIsOpen(false)}
+              onActivity={() => !isOpen && setHasUnread(true)}
+            />
+          </div>
+        )}
+  
         <button
-          className="chatbot-send-btn"
-          onClick={() => sendMessage()}
+          type="button"
+          className={`cb-bubble${isOpen ? " cb-bubble--open" : ""}`}
+          onClick={() => {
+            if (isOpen) setIsOpen(false);
+            else { setIsOpen(true); setHasUnread(false); }
+          }}
+          aria-label={isOpen ? "Close calculus tutor" : "Open calculus tutor"}
+          aria-expanded={isOpen}
+          aria-haspopup="dialog"
         >
-          Send
+          <span className="cb-bubble-icon" aria-hidden="true">{isOpen ? "✕" : "∂"}</span>
+          {!isOpen && hasUnread && <span className="cb-bubble-badge" aria-label="New message" />}
+          {!isOpen && <span className="cb-bubble-label">Ask tutor</span>}
         </button>
       </div>
-
-    </div>
+    </>
   );
-};
+}
 
 export default Chatbot;

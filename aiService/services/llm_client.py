@@ -13,7 +13,7 @@ load_dotenv("aiService/services/.env")
 logging.basicConfig(level=logging.INFO)
 
 # Toggle between mock and OpenAI
-USE_MOCK = True
+USE_MOCK = os.getenv("USE_MOCK", "True").lower() == "true"
 
 # ─────────────────────────────────────────────────────────────
 # CB-20: Model Fallback & Response Caching — configuration
@@ -359,11 +359,23 @@ def _cache_set(key: str, value: str):
     _response_cache[key] = (time.monotonic() + LLM_CACHE_TTL_SECONDS, value)
 
 
-def _build_messages(message: str, topic: str, difficulty: str, history: list) -> list:
+def _build_messages(message: str, topic: str, difficulty: str, history: list, summary: str = "") -> list:
     """Shared message-array builder used by both the sync and streaming
     primary/fallback calls, so system prompt + history handling can't drift
-    between them."""
+    between them.
+    
+    CB-13: If a session summary is provided, inject it as a system-level note
+    ahead of the recent turns so the model can see the earlier context.
+    """
     messages = [{"role": "system", "content": _build_system_content(topic, difficulty)}]
+    
+    # CB-13: Inject session summary as a note before history
+    if summary and summary.strip():
+        messages.append({
+            "role": "system",
+            "content": f"Earlier in this session: {summary}"
+        })
+    
     history = history[-10:] if history and len(history) > 10 else (history or [])
     for item in history:
         messages.append({"role": item["role"], "content": item["content"]})
@@ -375,7 +387,8 @@ async def ask_mock(
     message: str,
     topic: str = "",
     history: list = None,
-    difficulty: str = "intermediate"
+    difficulty: str = "intermediate",
+    summary: str = ""
 ):
     """
     Mock AI response for testing without OpenAI.
@@ -389,6 +402,7 @@ Mock AI Response
 
 Topic: {topic}
 Difficulty (CB-18): {difficulty}
+Session Summary (CB-13): {summary if summary else 'None'}
 
 Question:
 {message}
@@ -405,19 +419,22 @@ async def ask_openai(
     message: str,
     topic: str = "",
     history: list = None,
-    difficulty: str = "intermediate"
+    difficulty: str = "intermediate",
+    summary: str = ""
 ):
     """
     Send request to the primary provider (xAI/Grok), degrading to the
     mock response generator (CB-20) on timeout, error, or when the
     circuit breaker is open due to recent repeated failures. No second
     paid provider is used.
+    
+    CB-13: Includes session summary as a system note if provided.
     """
 
     if history is None:
         history = []
 
-    messages = _build_messages(message, topic, difficulty, history)
+    messages = _build_messages(message, topic, difficulty, history, summary)
 
     served_by = "primary"
     response_content = None
@@ -445,7 +462,7 @@ async def ask_openai(
     # ── Fallback (CB-20): degrade to mock, no second paid provider ────
     if response_content is None:
         served_by = "fallback_mock"
-        response_content = await ask_mock(message, topic, history, difficulty)
+        response_content = await ask_mock(message, topic, history, difficulty, summary)
 
     logging.info(f"LLM_RESPONSE_SOURCE: served_by={served_by} model={'grok-3-mini' if served_by == 'primary' else 'mock'}")
 
@@ -470,20 +487,25 @@ async def ask_mock_stream(
     message: str,
     topic: str = "",
     history: list = None,
-    difficulty: str = "intermediate"
+    difficulty: str = "intermediate",
+    summary: str = ""
 ):
     """
     Streaming version of the mock response, for testing without
     burning OpenAI/Grok API credits. Yields word-by-word.
+    
+    CB-13: Includes session summary in output if provided.
     """
     import asyncio
 
     if history is None:
         history = []
 
+    summary_note = f" Session summary (CB-13): {summary}." if summary else ""
+
     full_text = (
         f"Mock streamed response. Topic: {topic or 'general'}. "
-        f"Difficulty (CB-18): {difficulty}. "
+        f"Difficulty (CB-18): {difficulty}.{summary_note} "
         f"You asked: {message}. "
         f"History length: {len(history)} messages. "
         f"This is a placeholder streamed response simulating real token output."
@@ -498,7 +520,8 @@ async def ask_openai_stream(
     message: str,
     topic: str = "",
     history: list = None,
-    difficulty: str = "intermediate"
+    difficulty: str = "intermediate",
+    summary: str = ""
 ):
     """
     Streaming version of ask_openai. Yields text chunks as they arrive.
@@ -509,11 +532,13 @@ async def ask_openai_stream(
     student has already seen partial output), we stop rather than
     splice in a second provider's tokens — the partial answer plus
     the caller's own error handling (chatbot.py) is the safer outcome.
+    
+    CB-13: Includes session summary in the message context if provided.
     """
     if history is None:
         history = []
 
-    messages = _build_messages(message, topic, difficulty, history)
+    messages = _build_messages(message, topic, difficulty, history, summary)
 
     got_any_token = False
 
@@ -552,7 +577,7 @@ async def ask_openai_stream(
     # ── Fallback (CB-20): degrade to mock stream, no second paid provider ──
     # Only reached if the primary failed before any tokens were sent.
     logging.info("LLM_RESPONSE_SOURCE: served_by=fallback_mock (stream)")
-    async for chunk in ask_mock_stream(message, topic, history, difficulty):
+    async for chunk in ask_mock_stream(message, topic, history, difficulty, summary):
         yield chunk
 
 
@@ -560,7 +585,8 @@ async def ask_llm_stream(
     message: str,
     topic: str = "",
     history: list = None,
-    difficulty: str = "intermediate"
+    difficulty: str = "intermediate",
+    summary: str = ""
 ):
     """
     Streaming counterpart to ask_llm.
@@ -571,6 +597,8 @@ async def ask_llm_stream(
     cached text word-by-word (so the client still sees a stream) with
     no provider call at all. On a miss, streams normally and caches
     the assembled full text for next time.
+    
+    CB-13: Includes session summary in the message context if provided.
     """
     cache_key = _cache_key(message, topic, difficulty)
     cached = _cache_get(cache_key)
@@ -583,11 +611,11 @@ async def ask_llm_stream(
 
     chunks = []
     if USE_MOCK:
-        async for chunk in ask_mock_stream(message, topic, history, difficulty):
+        async for chunk in ask_mock_stream(message, topic, history, difficulty, summary):
             chunks.append(chunk)
             yield chunk
     else:
-        async for chunk in ask_openai_stream(message, topic, history, difficulty):
+        async for chunk in ask_openai_stream(message, topic, history, difficulty, summary):
             chunks.append(chunk)
             yield chunk
 
@@ -599,7 +627,8 @@ async def ask_llm(
     message: str,
     topic: str = "",
     history: list = None,
-    difficulty: str = "intermediate"
+    difficulty: str = "intermediate",
+    summary: str = ""
 ):
     """
     Main function used by chatbot.py.
@@ -607,6 +636,8 @@ async def ask_llm(
 
     CB-20: checks the response cache first (exact message+topic+difficulty
     match, short TTL). On a hit, returns immediately with no provider call.
+    
+    CB-13: Includes session summary in the message context if provided.
     """
     cache_key = _cache_key(message, topic, difficulty)
     cached = _cache_get(cache_key)
@@ -619,15 +650,34 @@ async def ask_llm(
             message,
             topic,
             history,
-            difficulty
+            difficulty,
+            summary
         )
     else:
         result = await ask_openai(
             message,
             topic,
             history,
-            difficulty
+            difficulty,
+            summary
         )
 
     _cache_set(cache_key, result)
     return result
+SUMMARY_PROMPT = """Compress this calculus tutoring conversation into a 3-5 sentence
+running summary. Note topics covered, where the student struggled, and what
+was already explained. Do not include LaTeX or follow-up suggestions."""
+
+async def summarize_history(messages: list, previous_summary: str = "") -> str:
+    content = f"Previous summary: {previous_summary}\n\n" if previous_summary else ""
+    content += "\n".join(f"{m['role']}: {m['content']}" for m in messages)
+    response = await client.chat.completions.create(
+        model="grok-3-mini",
+        messages=[
+            {"role": "system", "content": SUMMARY_PROMPT},
+            {"role": "user", "content": content},
+        ],
+        temperature=0.2,
+        max_tokens=200,
+    )
+    return response.choices[0].message.content.strip()

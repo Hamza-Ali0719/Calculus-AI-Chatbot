@@ -19,6 +19,7 @@ import re
 from pathlib import Path
 
 from aiService.services.llm_client import ask_llm
+from aiService.services.math_verifier import verify_cal_math  # CB-16
 
 # Test configuration
 QUESTIONS_FILE = Path(__file__).parent / "calculus_questions.json"
@@ -38,6 +39,7 @@ class TestResult:
         self.errors = []
         self.scope_enforcement = None  # CB-8: only set for off-topic tests
         self.correctness_score = None   # CB-9: answer key matching score
+        self.verified_correct = None    # CB-16: symbolic math verification (True/False/None)
     
     def to_dict(self):
         result_dict = {
@@ -54,6 +56,8 @@ class TestResult:
             result_dict["scope_enforcement"] = self.scope_enforcement
         if self.correctness_score is not None:
             result_dict["correctness_score"] = self.correctness_score
+        if self.verified_correct is not None:  # CB-16
+            result_dict["verified_correct"] = self.verified_correct
         return result_dict
 
 
@@ -288,6 +292,15 @@ async def test_question(question_data: dict) -> TestResult:
             )
             result.checks['answer_key'] = (passed_key, detail_key)
             result.correctness_score = score_key
+
+        # CB-16: Symbolic math verification (graceful fallback for unsupported problems)
+        try:
+            verified_correct, sympy_answer, error_message = verify_cal_math(result.question, response)
+            result.verified_correct = verified_correct
+            # None means unable to verify (unsupported operation), True/False means verified
+        except Exception as e:
+            # Gracefully ignore verification errors (unexpected operations)
+            result.verified_correct = None
         
         # Determine pass/fail
         critical_checks = ['latex_formatting', 'follow_ups', 'word_count']
@@ -468,6 +481,8 @@ if __name__ == "__main__":
         all_passed = cb2_passed and cb8_passed and cb9_passed
         if all_passed:
             print("🎉 ALL ACCEPTANCE CRITERIA MET")
+            import sys
+            sys.exit(0 if asyncio.run(main()) else 1)
         else:
             print("⚠ SOME CRITERIA NOT MET - Review failed tests above")
         print()

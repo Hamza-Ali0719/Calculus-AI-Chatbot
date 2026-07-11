@@ -22,6 +22,7 @@ class ChatRequest(BaseModel):
     topic: str = ""
     difficulty: str = "intermediate"  # CB-18: beginner | intermediate | advanced
     history: list = Field(default_factory=list)
+    summary: str = ""  # CB-13: session summarization
 
 class ChatResponse(BaseModel):
     answer: str
@@ -82,7 +83,8 @@ async def chat(request: ChatRequest):
             message=request.message,
             topic=request.topic,
             history=request.history,
-            difficulty=request.difficulty
+            difficulty=request.difficulty,
+            summary=request.summary  # CB-13: pass session summary
         )
 
         clean_answer, suggestions = parse_follow_ups(raw_response)
@@ -111,6 +113,7 @@ class ChatStreamRequest(BaseModel):
     topic: str = ""
     difficulty: str = "intermediate"  # CB-18
     history: list = Field(default_factory=list)
+    summary: str = ""  # CB-13: session summarization
 
 
 @app.post("/chat/stream")
@@ -138,7 +141,8 @@ async def chat_stream(request: ChatStreamRequest):
                 message=request.message,
                 topic=request.topic,
                 history=request.history,
-                difficulty=request.difficulty
+                difficulty=request.difficulty,
+                summary=request.summary  # CB-13: pass session summary
             ):
                 full_response += token
                 payload = json.dumps({"token": token})
@@ -171,3 +175,11 @@ async def chat_stream(request: ChatStreamRequest):
             "X-Accel-Buffering": "no",  # disables proxy buffering (e.g. nginx)
         }
     )
+class SummarizeRequest(BaseModel):
+    messages: list = Field(default_factory=list)
+    previous_summary: str = ""
+
+@app.post("/summarize")
+async def summarize(request: SummarizeRequest):
+    summary = await summarize_history(request.messages, request.previous_summary)
+    return {"summary": summary}

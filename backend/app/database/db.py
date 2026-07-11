@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
     user_id INTEGER NOT NULL,
     session_id TEXT NOT NULL UNIQUE,
     title TEXT DEFAULT 'New Chat',
+    summary TEXT DEFAULT '',
+    summary_through_count INTEGER DEFAULT 0,
     is_active INTEGER NOT NULL DEFAULT 1,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))

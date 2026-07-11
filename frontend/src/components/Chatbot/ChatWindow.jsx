@@ -288,8 +288,9 @@ function ChatWindow({ onClose, onActivity }) {
       context,
       token,
       pageUrl,
+      topic,  // CB-18: topicKey parameter
       appendToken,
-      ({ suggestions: finalSuggestions }) => {
+      ({ suggestions: finalSuggestions, message_id, session_id }) => {
         setMessages((prev) => {
           const exists = prev.some((m) => m.id === botMsgId);
           if (!exists) {
@@ -303,9 +304,10 @@ function ChatWindow({ onClose, onActivity }) {
               },
             ];
           }
-          return prev.map((m) => (m.id === botMsgId ? { ...m, streaming: false } : m));
+          return prev.map((m) => (m.id === botMsgId ? { ...m, streaming: false, messageId: message_id, sessionId: session_id } : m));
         });
         setSuggestions(finalSuggestions || []);
+        if (session_id) setSessionId(session_id);  // CB-12/CB-19: store session for export
         setIsLoading(false);
         onActivity?.();
       },
@@ -322,25 +324,45 @@ function ChatWindow({ onClose, onActivity }) {
                 role: "assistant",
                 content: data.reply || "Sorry, I didn't get a response. Please try again.",
                 timestamp: new Date().toISOString(),
+                messageId: data.message_id,    // CB-12
+                sessionId: data.session_id,    // CB-12/CB-19
               },
             ];
           });
           setSuggestions(data.suggestions || []);
           if (data.difficulty) setDifficulty(data.difficulty); // CB-18
+          if (data.session_id) setSessionId(data.session_id);  // CB-12/CB-19
         } catch (err) {
-          setMessages((prev) => {
-            const withoutPlaceholder = prev.filter((m) => m.id !== botMsgId);
-            return [
-              ...withoutPlaceholder,
-              {
-                id: botMsgId,
-                role: "assistant",
-                content: DEMO_BOT_REPLY,
-                timestamp: new Date().toISOString(),
-              },
-            ];
-          });
-          setSuggestions(DEMO_SUGGESTIONS);
+          // CB-11/CB-14: Handle rate limit errors gracefully
+          if (err.code === 429) {
+            const retryAfter = Math.ceil(err.retryAfter || 60);
+            setMessages((prev) => {
+              const withoutPlaceholder = prev.filter((m) => m.id !== botMsgId);
+              return [
+                ...withoutPlaceholder,
+                {
+                  id: botMsgId,
+                  role: "error",
+                  content: `${err.message} (${retryAfter}s). You've reached your message limit for now. Please wait before sending another message.`,
+                  timestamp: new Date().toISOString(),
+                },
+              ];
+            });
+          } else {
+            setMessages((prev) => {
+              const withoutPlaceholder = prev.filter((m) => m.id !== botMsgId);
+              return [
+                ...withoutPlaceholder,
+                {
+                  id: botMsgId,
+                  role: "assistant",
+                  content: DEMO_BOT_REPLY,
+                  timestamp: new Date().toISOString(),
+                },
+              ];
+            });
+            setSuggestions(DEMO_SUGGESTIONS);
+          }
         } finally {
           setIsLoading(false);
           onActivity?.();
@@ -514,11 +536,14 @@ function ChatWindow({ onClose, onActivity }) {
                     <Message
                       message={{ ...msg, userInitial: user?.username?.[0]?.toUpperCase() }}
                       showFeedback={!showSuggestions}
+                      messageId={msg.messageId}  // CB-12: pass for feedback
+                      sessionId={msg.sessionId}  // CB-12: pass for feedback
+                      userToken={token}          // CB-12: for feedback submission
                     />
                     {showSuggestions && (
                       <SuggestedQuestions suggestions={suggestions} onSelect={handleSend} disabled={isLoading} />
                     )}
-                    {showSuggestions && <MessageFeedback className="cb-msg-feedback--after-suggestions" />}
+                    {showSuggestions && <MessageFeedback className="cb-msg-feedback--after-suggestions" messageId={msg.messageId} sessionId={msg.sessionId} userToken={token} />}
                   </div>
                 );
               })}

@@ -432,7 +432,7 @@ async def get_session_messages(request: Request):
     """GET /api/chat/sessions/{session_id}/messages - Alias for history"""
     return await get_conversation_history(request)
 
-
+#chat endpoint function
 async def chat_endpoint(request: Request):
     """
     POST /api/chat - Main chat endpoint that combines LLM calls with DB storage

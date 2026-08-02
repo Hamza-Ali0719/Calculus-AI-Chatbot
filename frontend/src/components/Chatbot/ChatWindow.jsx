@@ -111,7 +111,7 @@ function ChatWindow({ onClose, onActivity }) {
 
   // CB-21: move keyboard focus into the panel as soon as it opens, so a
   // keyboard-only user isn't left with focus stranded on the (now hidden)
-  // trigger bubble.
+  // trigger bubble.yes
   useEffect(() => {
     textareaRef.current?.focus();
   }, []);

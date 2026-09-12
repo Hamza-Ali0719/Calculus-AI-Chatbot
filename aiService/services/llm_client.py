@@ -15,7 +15,7 @@ env_path = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
 # Now you can get your API keys securely
-GROK_API_KEY = os.getenv("GROK_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -290,10 +290,9 @@ def _build_system_content(topic: str, difficulty: str) -> str:
     return system_content
 
 
-# Create OpenAI client (primary — xAI/Grok)
 client = AsyncOpenAI(
-    api_key=os.getenv("GROK_API_KEY"),
-    base_url="https://api.x.ai/v1"
+    api_key=os.getenv("GROQ_API_KEY"),
+    base_url="https://api.groq.com/openai/v1"
 )
 
 
